@@ -1,4 +1,5 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -202,6 +203,37 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:protobuf",
     ],
+)
+
+cc_library(
+    name = "cel_c_api",
+    srcs = ["cel_c_api.cc"],
+    hdrs = ["cel_c_api.h"],
+    deps = [
+        "//checker:validation_result",
+        "//common:value",
+        "//compiler:compiler",
+        "//compiler:compiler_factory",
+        "//compiler:standard_library",
+        "//runtime:activation",
+        "//runtime:runtime",
+        "//runtime:runtime_builder",
+        "//runtime:standard_runtime_builder_factory",
+        "@com_google_absl//absl/status",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_shared_library(
+    name = "cel_c_api_shared",
+    deps = [":cel_c_api"],
+    shared_lib_name = "libcel_c_api.dylib",
+)
+
+cc_binary(
+    name = "cel_c_test",
+    srcs = ["test.c"],
+    deps = [":cel_c_api"],
 )
 
 cc_test(
