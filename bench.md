@@ -8,6 +8,22 @@ Benchmark driver: [tools/test_cel_lua_atc.lua](tools/test_cel_lua_atc.lua)
 
 CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](tools/cel_c_api.h)
 
+
+## Results
+
+The table below summarizes the average latency per operation for each benchmark case. All boolean results matched the expected outcome in the raw run.
+
+| Case | Expected result | CEL `bind+exec` | CEL `exec-only` | ATC | Lua |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ffi membership` | `true` | `5.862 us/op` | `3.230 us/op` | `1.781 us/op` | `0.042 us/op` |
+| `uri matching` | `true` | `10.322 us/op` | `5.856 us/op` | `2.368 us/op` | `0.029 us/op` |
+| `uri exact matching` | `true` | `11.096 us/op` | `5.062 us/op` | `1.568 us/op` | `0.012 us/op` |
+| `host and uri matching` | `true` | `9.885 us/op` | `5.567 us/op` | `1.683 us/op` | `0.022 us/op` |
+| `uri miss` | `false` | `7.797 us/op` | `3.632 us/op` | `1.269 us/op` | `0.024 us/op` |
+
+`bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
+
+
 ## Build
 
 1. Build `cel-cpp`:
@@ -30,21 +46,6 @@ CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](too
 	```
 
 	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`. Let test_cel_lua_atc.lua find the right path of atc router lib: [link](https://github.com/chobits/cel-cpp/blob/master/tools/test_cel_lua_atc.lua#L37).
-
-## Results
-
-The table below summarizes the average latency per operation for each benchmark case. All boolean results matched the expected outcome in the raw run.
-
-| Case | Expected result | CEL `bind+exec` | CEL `exec-only` | ATC | Lua |
-| --- | --- | ---: | ---: | ---: | ---: |
-| `ffi membership` | `true` | `5.862 us/op` | `3.230 us/op` | `1.781 us/op` | `0.042 us/op` |
-| `uri matching` | `true` | `10.322 us/op` | `5.856 us/op` | `2.368 us/op` | `0.029 us/op` |
-| `uri exact matching` | `true` | `11.096 us/op` | `5.062 us/op` | `1.568 us/op` | `0.012 us/op` |
-| `host and uri matching` | `true` | `9.885 us/op` | `5.567 us/op` | `1.683 us/op` | `0.022 us/op` |
-| `uri miss` | `false` | `7.797 us/op` | `3.632 us/op` | `1.269 us/op` | `0.024 us/op` |
-
-`bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
-
 
 ## CEL: `bind+exec` vs `exec-only`
 
