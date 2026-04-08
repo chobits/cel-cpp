@@ -33,55 +33,60 @@ CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](too
 
 ## Results
 
+Each result block has two parts. The first three lines show whether CEL, ATC, and plain Lua all produced the expected boolean result for that case. The timing lines below show the average cost per operation. For example, in `ffi membership`, all three implementations return `true`, which means they all agree that the test condition matches. 
+
+The numbers that follow show that plain Lua is the fastest baseline, for example: `cel(bind+exec): 0.005862 s total, 5.862 us/op`. Here, `cel(bind+exec)` is the benchmark mode, `0.005862 s total` is the total wall-clock time for the whole benchmark loop, and `5.862 us/op` means the average time per operation in microseconds. In other words, this line says that the CEL bind-and-execute path took about 5.862 microseconds for each evaluation on average.
+
 ```text
-$ luajit tools/test_cel_lua_atc.lua
-gc[before_setup]: 78.51 KB
-gc[after_setup]: 104.29 KB
+$ luajit tools/test.lua
+gc[before_setup]: 83.50 KB
+gc[after_setup]: 104.31 KB
 1. ffi membership
 cel: "\"foo\" in a" => true
 atc: http.path ^= "/foo" && tcp.port == 80 => true
 lua: contains(a, "foo") => true
-cel: 0.178113 s total, 5.937 us/op
-atc: 0.043045 s total, 1.435 us/op
-lua: 0.000042 s total, 0.001 us/op
+cel(bind+exec): 0.005862 s total, 5.862 us/op
+cel(exec-only): 0.003230 s total, 3.230 us/op
+atc: 0.001781 s total, 1.781 us/op
+lua: 0.000042 s total, 0.042 us/op
 
 2. uri matching
 cel: path.startsWith("/foo") && port == 80 => true
 atc: http.path ^= "/foo" && tcp.port == 80 => true
 lua: path:sub(1, #"/foo") == "/foo" and port == 80 => true
-cel(bind+exec): 0.285014 s total, 9.500 us/op
-cel(exec-only): 0.164688 s total, 5.490 us/op
-atc: 0.042591 s total, 1.420 us/op
-lua: 0.000041 s total, 0.001 us/op
+cel(bind+exec): 0.010322 s total, 10.322 us/op
+cel(exec-only): 0.005856 s total, 5.856 us/op
+atc: 0.002368 s total, 2.368 us/op
+lua: 0.000029 s total, 0.029 us/op
 
 3. uri exact matching
 cel: path == "/foo/bar" && port == 80 => true
 atc: http.path == "/foo/bar" && tcp.port == 80 => true
 lua: path == "/foo/bar" and port == 80 => true
-cel(bind+exec): 0.273828 s total, 9.128 us/op
-cel(exec-only): 0.152969 s total, 5.099 us/op
-atc: 0.043358 s total, 1.445 us/op
-lua: 0.000038 s total, 0.001 us/op
+cel(bind+exec): 0.011096 s total, 11.096 us/op
+cel(exec-only): 0.005062 s total, 5.062 us/op
+atc: 0.001568 s total, 1.568 us/op
+lua: 0.000012 s total, 0.012 us/op
 
 4. host and uri matching
 cel: host == "example.com" && path.startsWith("/api") => true
 atc: http.host == "example.com" && http.path ^= "/api" => true
 lua: host == "example.com" and path:sub(1, #"/api") == "/api" => true
-cel(bind+exec): 0.291965 s total, 9.732 us/op
-cel(exec-only): 0.166853 s total, 5.562 us/op
-atc: 0.046070 s total, 1.536 us/op
-lua: 0.000050 s total, 0.002 us/op
+cel(bind+exec): 0.009885 s total, 9.885 us/op
+cel(exec-only): 0.005567 s total, 5.567 us/op
+atc: 0.001683 s total, 1.683 us/op
+lua: 0.000022 s total, 0.022 us/op
 
 5. uri miss
 cel: path.startsWith("/foo") && port == 80 => false
 atc: http.path ^= "/foo" && tcp.port == 80 => false
 lua: path:sub(1, #"/foo") == "/foo" and port == 80 => false
-cel(bind+exec): 0.226151 s total, 7.538 us/op
-cel(exec-only): 0.104598 s total, 3.487 us/op
-atc: 0.035057 s total, 1.169 us/op
-lua: 0.000042 s total, 0.001 us/op
-gc[after_benchmark]: 166.38 KB
-gc[after_destroy]: 166.32 KB
+cel(bind+exec): 0.007797 s total, 7.797 us/op
+cel(exec-only): 0.003632 s total, 3.632 us/op
+atc: 0.001269 s total, 1.269 us/op
+lua: 0.000024 s total, 0.024 us/op
+gc[after_benchmark]: 168.90 KB
+gc[after_destroy]: 168.83 KB
 ```
 ## CEL: `bind+exec` vs `exec-only`
 
