@@ -5,6 +5,7 @@
 This benchmark compares three ways to evaluate simple expressions: CEL through the shared C API, ATC Router through its Lua wrapper, and plain Lua as a minimal baseline. The goal is to understand the rough performance gap and to separate CEL input binding cost from CEL execution cost. In an HTTP request path, values such as `path`, `host`, and `port` change for every request, so `bind+exec` is the realistic number, while `exec-only` is only a lower-bound microbenchmark after inputs have already been prepared.
 
 Benchmark driver: [tools/test_cel_lua_atc.lua](tools/test_cel_lua_atc.lua)
+CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](tools/cel_c_api.h)
 
 ## Results
 
