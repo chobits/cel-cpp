@@ -39,22 +39,37 @@ So, for real request matching:
 - `bind+exec` is the meaningful latency number.
 - `exec-only` is a diagnostic number that shows how much of the total cost comes from variable binding versus expression execution.
 
-## Why The Four Results Differ
+## Why CEL Is Slower Than ATC Router
 
-`Lua` is fastest because it is just running direct native Lua string and integer checks, such as prefix comparison or equality, with almost no abstraction overhead.
+1. CEL is a general-purpose expression engine, while ATC Router is a routing-specific matcher.
 
-`ATC` is much faster than CEL because it is a specialized routing engine. Its DSL and execution model are designed specifically for route matching, so it avoids much of the general-purpose machinery that CEL uses.
+	In this benchmark, CEL is evaluating expressions such as `path.startsWith("/foo") && port == 80` through a generic runtime. That runtime is designed to support many kinds of expressions, types, operators, and functions, not just route matching. ATC Router does not need that level of generality. Its DSL is much narrower, so its execution path can stay closer to a direct route-matching engine.
 
-`CEL (exec-only)` is slower than ATC because CEL is a general expression engine. Even after variables are already bound, it still needs to execute through a generic runtime, resolve values, dispatch operators and functions like `startsWith`, and materialize the result.
+	More concretely, CEL is built like a reusable expression runtime. Before it can answer one simple route-style question, it still has to go through the same machinery it would use for many other kinds of expressions. ATC Router can skip much of that because it is not trying to be a general expression system.
 
-`CEL (bind+exec)` is the slowest CEL mode because it includes both the general CEL execution cost and the additional per-request variable binding cost. That binding step means taking request values and inserting them into the CEL activation before evaluation.
+2. CEL pays more runtime dispatch cost for every evaluation.
 
-A simple summary is:
+	Even in `exec-only` mode, CEL still has to resolve variables, evaluate the expression tree, dispatch operators or functions such as `startsWith`, and materialize the boolean result. In other words, the runtime must decide which generic operation implementation to call and then execute it. ATC Router does much less of this generic dispatch work because its operations are specialized for routing semantics such as prefix match and equality match.
 
-- `Lua`: minimal handwritten logic with almost no framework overhead.
-- `ATC`: specialized native matcher for routing.
-- `CEL (exec-only)`: generic expression runtime only.
-- `CEL (bind+exec)`: generic expression runtime plus per-request input binding.
+	A simpler way to think about `dispatch cost` is this: CEL first has to figure out what operation is being requested, find the corresponding implementation, and then run it. So a call like `path.startsWith("/foo")` is not just a direct prefix check. The runtime must resolve `path`, confirm it is a string, route the call to the generic `startsWith` implementation, and then wrap the answer back into a CEL boolean value. ATC Router can stay closer to a dedicated prefix-match path, so it does less indirection.
+
+3. CEL has explicit input binding overhead in the realistic request path.
+
+	In `bind+exec`, each request value such as `path`, `host`, or `port` is inserted into the CEL activation before evaluation. That cost is visible in the gap between `bind+exec` and `exec-only`. For HTTP-style matching, this binding cost is real, because request inputs usually change for every request. ATC Router also consumes request inputs, but in this benchmark it stays within a more specialized context model and avoids part of CEL's general-purpose value binding overhead.
+
+	A simpler description of `binding overhead` is: before CEL can run the expression, the wrapper has to take request data and load it into CEL's variable environment. That means steps like "take the request path string, create a CEL string value, store it under the variable name `path`, take the request port, create a CEL int value, store it under `port`". Those steps are small, but they happen on every request in the realistic path.
+
+4. CEL uses more generic value representations and bookkeeping.
+
+	The wrapper code binds inputs through CEL value objects and a reusable activation, and evaluation runs through the generic CEL runtime. That means more abstraction layers, more type handling, and more runtime bookkeeping than a specialized matcher needs. ATC Router can keep its internal representation closer to the specific data it matches, which reduces overhead.
+
+	Here `bookkeeping` means the extra internal management work needed by a generic runtime. For example, the runtime may need to keep track of values in a generic container, preserve type information, pass data through runtime helper objects, and return results in a generic CEL value form rather than a raw native boolean. A specialized matcher can often work more directly on the original request fields with fewer conversions.
+
+5. This benchmark already excludes some costs, so the remaining CEL gap is mostly execution-path overhead.
+
+	The benchmark reuses compiled CEL programs and does not include parse or compile time inside the hot loop. That means the measured gap is not mainly coming from repeated compilation. The remaining difference is mostly from per-request binding cost plus the runtime cost of evaluating a general expression engine versus a specialized route matcher.
+
+	This matters because it rules out an easy explanation. The benchmark is not repeatedly parsing or compiling the CEL expression inside the loop. So when `cel(exec-only)` is still slower than ATC, that remaining gap is mostly the steady-state cost of CEL evaluation itself, not one-time setup work.
 
 ## Build
 
