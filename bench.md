@@ -26,29 +26,6 @@ For Case name (`ffi membership`), if you want to see the exact CEL, ATC, and Lua
 `bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
 
 
-## Build
-
-1. Build `cel-cpp`:
-
-	```bash
-	bazel build //:cel_cpp_shared
-	```
-
-2. Build the CEL C wrapper:
-
-	```bash
-	bazel build //tools:cel_c_api_shared
-	```
-
-3. Build and wire in ATC Router:
-
-	```bash
-	cd /Users/xc/work/dev/atc-router
-	make build
-	```
-
-	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`. Let test_cel_lua_atc.lua find the right path of atc router lib: [link](https://github.com/chobits/cel-cpp/blob/master/tools/test_cel_lua_atc.lua#L37).
-
 ## CEL: `bind+exec` vs `exec-only`
 
 `bind+exec` means that for each evaluation, we first bind request data into CEL variables such as `path`, `host`, and `port`, and then execute the expression.
@@ -78,6 +55,29 @@ A simple summary is:
 - `ATC`: specialized native matcher for routing.
 - `CEL (exec-only)`: generic expression runtime only.
 - `CEL (bind+exec)`: generic expression runtime plus per-request input binding.
+
+## Build
+
+1. Build `cel-cpp`:
+
+	```bash
+	bazel build //:cel_cpp_shared
+	```
+
+2. Build the CEL C wrapper:
+
+	```bash
+	bazel build //tools:cel_c_api_shared
+	```
+
+3. Build and wire in ATC Router:
+
+	```bash
+	cd /Users/xc/work/dev/atc-router
+	make build
+	```
+
+	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`. Let test_cel_lua_atc.lua find the right path of atc router lib: [link](https://github.com/chobits/cel-cpp/blob/master/tools/test_cel_lua_atc.lua#L37).
 
 
 ## Raw results
