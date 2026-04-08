@@ -32,6 +32,23 @@ int cel_eval_string_list_bool_program(const cel_program* program,
                                       char* error_buffer,
                                       size_t error_buffer_size);
 
+// Creates a reusable CEL program for a boolean expression over scalar string
+// and int64 variables, for example 'path.startsWith("/foo") && port == 80'.
+cel_program* cel_create_scalar_bool_program(
+    const char* expression, const char* const* string_variable_names,
+    size_t string_variable_count, const char* const* int_variable_names,
+    size_t int_variable_count, char* error_buffer, size_t error_buffer_size);
+
+// Evaluates a previously created scalar CEL program with string and int64
+// variables bound in the same order used at creation time.
+int cel_eval_scalar_bool_program(const cel_program* program,
+                                 const char* const* string_values,
+                                 size_t string_value_count,
+                                 const int64_t* int_values,
+                                 size_t int_value_count, int* result,
+                                 char* error_buffer,
+                                 size_t error_buffer_size);
+
 void cel_destroy_program(cel_program* program);
 
 #ifdef __cplusplus

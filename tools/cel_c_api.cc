@@ -34,7 +34,9 @@
 #include "google/protobuf/message.h"
 
 struct cel_program {
-  std::string variable_name;
+  std::string list_variable_name;
+  std::vector<std::string> string_variable_names;
+  std::vector<std::string> int_variable_names;
   std::unique_ptr<cel::Runtime> runtime;
   std::unique_ptr<cel::Program> program;
 };
@@ -142,7 +144,80 @@ absl::StatusOr<cel_program*> CreateStringListBoolProgram(
   CEL_ASSIGN_OR_RETURN(auto program, runtime->CreateProgram(std::move(ast)));
 
   auto* handle = new cel_program{
-      .variable_name = std::string(variable_name),
+      .list_variable_name = std::string(variable_name),
+      .runtime = std::move(runtime),
+      .program = std::move(program),
+  };
+  return handle;
+}
+
+absl::Status ValidateNames(const char* const* names, size_t count,
+                           const char* label) {
+  if (names == nullptr && count != 0) {
+    return absl::InvalidArgumentError(std::string(label) +
+                                      " must not be null when count > 0");
+  }
+  for (size_t index = 0; index < count; ++index) {
+    if (names[index] == nullptr || names[index][0] == '\0') {
+      return absl::InvalidArgumentError(std::string(label) +
+                                        " entries must not be null or empty");
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<cel_program*> CreateScalarBoolProgram(
+    const char* expression, const char* const* string_variable_names,
+    size_t string_variable_count, const char* const* int_variable_names,
+    size_t int_variable_count) {
+  if (expression == nullptr) {
+    return absl::InvalidArgumentError("expression must not be null");
+  }
+  CEL_RETURN_IF_ERROR(
+      ValidateNames(string_variable_names, string_variable_count,
+                    "string_variable_names"));
+  CEL_RETURN_IF_ERROR(
+      ValidateNames(int_variable_names, int_variable_count,
+                    "int_variable_names"));
+
+  const auto* descriptor_pool = google::protobuf::DescriptorPool::generated_pool();
+
+  CEL_ASSIGN_OR_RETURN(auto compiler_builder,
+                       cel::NewCompilerBuilder(descriptor_pool));
+  CEL_RETURN_IF_ERROR(
+      compiler_builder->AddLibrary(cel::StandardCompilerLibrary()));
+
+  auto& checker_builder = compiler_builder->GetCheckerBuilder();
+  for (size_t index = 0; index < string_variable_count; ++index) {
+    CEL_RETURN_IF_ERROR(checker_builder.AddVariable(cel::MakeVariableDecl(
+        string_variable_names[index], cel::StringType())));
+  }
+  for (size_t index = 0; index < int_variable_count; ++index) {
+    CEL_RETURN_IF_ERROR(checker_builder.AddVariable(
+        cel::MakeVariableDecl(int_variable_names[index], cel::IntType())));
+  }
+
+  CEL_ASSIGN_OR_RETURN(auto compiler, compiler_builder->Build());
+  CEL_ASSIGN_OR_RETURN(auto validation_result,
+                       compiler->Compile(expression, "test.lua"));
+  if (!validation_result.IsValid()) {
+    return absl::InvalidArgumentError(validation_result.FormatError());
+  }
+  CEL_ASSIGN_OR_RETURN(auto ast, validation_result.ReleaseAst());
+
+  cel::RuntimeOptions runtime_options;
+  CEL_ASSIGN_OR_RETURN(auto runtime_builder,
+                       cel::CreateStandardRuntimeBuilder(descriptor_pool,
+                                                         runtime_options));
+  CEL_ASSIGN_OR_RETURN(auto runtime, std::move(runtime_builder).Build());
+  CEL_ASSIGN_OR_RETURN(auto program, runtime->CreateProgram(std::move(ast)));
+
+  auto* handle = new cel_program{
+      .string_variable_names = std::vector<std::string>(
+          string_variable_names, string_variable_names + string_variable_count),
+      .int_variable_names =
+          std::vector<std::string>(int_variable_names,
+                                   int_variable_names + int_variable_count),
       .runtime = std::move(runtime),
       .program = std::move(program),
   };
@@ -170,8 +245,52 @@ absl::StatusOr<bool> EvalStringListBoolProgram(const cel_program& program,
       google::protobuf::Arena::Create<NativeStringListValue>(&arena, std::move(values));
   cel::Activation activation;
   activation.InsertOrAssignValue(
-      program.variable_name,
+      program.list_variable_name,
       cel::ListValue(cel::CustomListValue(list_impl, &arena)));
+
+  CEL_ASSIGN_OR_RETURN(auto value, program.program->Evaluate(&arena, activation));
+  if (!value.IsBool()) {
+    return absl::InvalidArgumentError("expression result is not a bool");
+  }
+  return value.GetBool().NativeValue();
+}
+
+absl::StatusOr<bool> EvalScalarBoolProgram(const cel_program& program,
+                                           const char* const* string_values,
+                                           size_t string_value_count,
+                                           const int64_t* int_values,
+                                           size_t int_value_count) {
+  if (string_value_count != program.string_variable_names.size()) {
+    return absl::InvalidArgumentError(
+        "string value count does not match declared string variable count");
+  }
+  if (int_value_count != program.int_variable_names.size()) {
+    return absl::InvalidArgumentError(
+        "int value count does not match declared int variable count");
+  }
+  if (string_values == nullptr && string_value_count != 0) {
+    return absl::InvalidArgumentError(
+        "string_values must not be null when string_value_count > 0");
+  }
+  if (int_values == nullptr && int_value_count != 0) {
+    return absl::InvalidArgumentError(
+        "int_values must not be null when int_value_count > 0");
+  }
+
+  google::protobuf::Arena arena;
+  cel::Activation activation;
+  for (size_t index = 0; index < string_value_count; ++index) {
+    if (string_values[index] == nullptr) {
+      return absl::InvalidArgumentError(
+          "string_values entries must not be null");
+    }
+    activation.InsertOrAssignValue(program.string_variable_names[index],
+                                   cel::StringValue(string_values[index]));
+  }
+  for (size_t index = 0; index < int_value_count; ++index) {
+    activation.InsertOrAssignValue(program.int_variable_names[index],
+                                   cel::IntValue(int_values[index]));
+  }
 
   CEL_ASSIGN_OR_RETURN(auto value, program.program->Evaluate(&arena, activation));
   if (!value.IsBool()) {
@@ -292,6 +411,45 @@ extern "C" int cel_eval_string_list_bool_program(
   }
 
   auto evaluation = EvalStringListBoolProgram(*program, items, item_count);
+  if (!evaluation.ok()) {
+    return FailStatus(evaluation.status(), error_buffer, error_buffer_size);
+  }
+
+  *result = *evaluation ? 1 : 0;
+  WriteError("", error_buffer, error_buffer_size);
+  return 0;
+}
+
+extern "C" cel_program* cel_create_scalar_bool_program(
+    const char* expression, const char* const* string_variable_names,
+    size_t string_variable_count, const char* const* int_variable_names,
+    size_t int_variable_count, char* error_buffer, size_t error_buffer_size) {
+  auto program = CreateScalarBoolProgram(expression, string_variable_names,
+                                         string_variable_count,
+                                         int_variable_names, int_variable_count);
+  if (!program.ok()) {
+    FailStatus(program.status(), error_buffer, error_buffer_size);
+    return nullptr;
+  }
+  WriteError("", error_buffer, error_buffer_size);
+  return *program;
+}
+
+extern "C" int cel_eval_scalar_bool_program(
+    const cel_program* program, const char* const* string_values,
+    size_t string_value_count, const int64_t* int_values,
+    size_t int_value_count, int* result, char* error_buffer,
+    size_t error_buffer_size) {
+  if (program == nullptr) {
+    return Fail("program must not be null", error_buffer, error_buffer_size);
+  }
+  if (result == nullptr) {
+    return Fail("result must not be null", error_buffer, error_buffer_size);
+  }
+
+  auto evaluation = EvalScalarBoolProgram(*program, string_values,
+                                          string_value_count, int_values,
+                                          int_value_count);
   if (!evaluation.ok()) {
     return FailStatus(evaluation.status(), error_buffer, error_buffer_size);
   }
