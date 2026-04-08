@@ -37,6 +37,8 @@ struct cel_program {
   std::string list_variable_name;
   std::vector<std::string> string_variable_names;
   std::vector<std::string> int_variable_names;
+  google::protobuf::Arena arena;
+  cel::Activation activation;
   std::unique_ptr<cel::Runtime> runtime;
   std::unique_ptr<cel::Program> program;
 };
@@ -299,6 +301,55 @@ absl::StatusOr<bool> EvalScalarBoolProgram(const cel_program& program,
   return value.GetBool().NativeValue();
 }
 
+absl::Status BindScalarValues(cel_program& program,
+                              const char* const* string_values,
+                              size_t string_value_count,
+                              const int64_t* int_values,
+                              size_t int_value_count) {
+  if (string_value_count != program.string_variable_names.size()) {
+    return absl::InvalidArgumentError(
+        "string value count does not match declared string variable count");
+  }
+  if (int_value_count != program.int_variable_names.size()) {
+    return absl::InvalidArgumentError(
+        "int value count does not match declared int variable count");
+  }
+  if (string_values == nullptr && string_value_count != 0) {
+    return absl::InvalidArgumentError(
+        "string_values must not be null when string_value_count > 0");
+  }
+  if (int_values == nullptr && int_value_count != 0) {
+    return absl::InvalidArgumentError(
+        "int_values must not be null when int_value_count > 0");
+  }
+
+  for (size_t index = 0; index < string_value_count; ++index) {
+    if (string_values[index] == nullptr) {
+      return absl::InvalidArgumentError(
+          "string_values entries must not be null");
+    }
+    program.activation.InsertOrAssignValue(program.string_variable_names[index],
+                                           cel::StringValue(string_values[index]));
+  }
+  for (size_t index = 0; index < int_value_count; ++index) {
+    program.activation.InsertOrAssignValue(program.int_variable_names[index],
+                                           cel::IntValue(int_values[index]));
+  }
+
+  return absl::OkStatus();
+}
+
+absl::StatusOr<bool> EvalBoundBoolProgram(cel_program& program) {
+  program.arena.Reset();
+  CEL_ASSIGN_OR_RETURN(
+      auto value,
+      program.program->Evaluate(&program.arena, program.activation));
+  if (!value.IsBool()) {
+    return absl::InvalidArgumentError("expression result is not a bool");
+  }
+  return value.GetBool().NativeValue();
+}
+
 }  // namespace
 
 extern "C" int cel_eval_int64(const char* expression, int64_t* result,
@@ -450,6 +501,48 @@ extern "C" int cel_eval_scalar_bool_program(
   auto evaluation = EvalScalarBoolProgram(*program, string_values,
                                           string_value_count, int_values,
                                           int_value_count);
+  if (!evaluation.ok()) {
+    return FailStatus(evaluation.status(), error_buffer, error_buffer_size);
+  }
+
+  *result = *evaluation ? 1 : 0;
+  WriteError("", error_buffer, error_buffer_size);
+  return 0;
+}
+
+extern "C" int cel_bind_scalar_values(cel_program* program,
+                                       const char* const* string_values,
+                                       size_t string_value_count,
+                                       const int64_t* int_values,
+                                       size_t int_value_count,
+                                       char* error_buffer,
+                                       size_t error_buffer_size) {
+  if (program == nullptr) {
+    return Fail("program must not be null", error_buffer, error_buffer_size);
+  }
+
+  auto bind_status =
+      BindScalarValues(*program, string_values, string_value_count, int_values,
+                       int_value_count);
+  if (!bind_status.ok()) {
+    return FailStatus(bind_status, error_buffer, error_buffer_size);
+  }
+
+  WriteError("", error_buffer, error_buffer_size);
+  return 0;
+}
+
+extern "C" int cel_eval_bound_bool_program(cel_program* program, int* result,
+                                             char* error_buffer,
+                                             size_t error_buffer_size) {
+  if (program == nullptr) {
+    return Fail("program must not be null", error_buffer, error_buffer_size);
+  }
+  if (result == nullptr) {
+    return Fail("result must not be null", error_buffer, error_buffer_size);
+  }
+
+  auto evaluation = EvalBoundBoolProgram(*program);
   if (!evaluation.ok()) {
     return FailStatus(evaluation.status(), error_buffer, error_buffer_size);
   }

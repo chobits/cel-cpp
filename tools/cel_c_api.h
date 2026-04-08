@@ -49,6 +49,21 @@ int cel_eval_scalar_bool_program(const cel_program* program,
                                  char* error_buffer,
                                  size_t error_buffer_size);
 
+// Binds scalar values to a previously created scalar CEL program. The order
+// of values must match the variable declaration order passed during creation.
+int cel_bind_scalar_values(cel_program* program,
+                           const char* const* string_values,
+                           size_t string_value_count,
+                           const int64_t* int_values,
+                           size_t int_value_count, char* error_buffer,
+                           size_t error_buffer_size);
+
+// Evaluates a scalar CEL program using the values most recently bound via
+// cel_bind_scalar_values().
+int cel_eval_bound_bool_program(cel_program* program, int* result,
+                                char* error_buffer,
+                                size_t error_buffer_size);
+
 void cel_destroy_program(cel_program* program);
 
 #ifdef __cplusplus
