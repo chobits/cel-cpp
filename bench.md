@@ -15,13 +15,13 @@ The table below summarizes the average latency per operation for each benchmark 
 
 | Case | CEL `bind+exec` | CEL `exec-only` | ATC | Lua |
 | --- | ---: | ---: | ---: | ---: |
-| `ffi membership` | `5.862 us/op` | `3.230 us/op` | `1.781 us/op` | `0.042 us/op` |
+| `list membership` | `5.862 us/op` | `3.230 us/op` | `1.781 us/op` | `0.042 us/op` |
 | `uri matching` | `10.322 us/op` | `5.856 us/op` | `2.368 us/op` | `0.029 us/op` |
 | `uri exact matching` | `11.096 us/op` | `5.062 us/op` | `1.568 us/op` | `0.012 us/op` |
 | `host and uri matching` | `9.885 us/op` | `5.567 us/op` | `1.683 us/op` | `0.022 us/op` |
 | `uri miss` | `7.797 us/op` | `3.632 us/op` | `1.269 us/op` | `0.024 us/op` |
 
-For Case name (`ffi membership`), if you want to see the exact CEL, ATC, and Lua expressions used in the benchmark, see the `Raw results` section below.
+For Case name (`list membership`), if you want to see the exact CEL, ATC, and Lua expressions used in the benchmark, see the `Raw results` section below.
 
 `bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
 
@@ -102,7 +102,7 @@ So, for real request matching:
 $ luajit tools/test.lua
 gc[before_setup]: 83.50 KB
 gc[after_setup]: 104.31 KB
-1. ffi membership
+1. list membership
 cel: "\"foo\" in a" => true
 atc: http.path ^= "/foo" && tcp.port == 80 => true
 lua: contains(a, "foo") => true

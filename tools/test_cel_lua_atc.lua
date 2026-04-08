@@ -403,7 +403,7 @@ local lua_membership_case = run_lua_case(iterations, function()
   return lua_list_contains(a, "foo")
 end, true)
 
-print_section(1, "ffi membership")
+print_section(1, "list membership")
 print_expression_line("cel", string.format("%q", cel_expression), bool_result[0] ~= 0)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_membership_case.matched)
 print_expression_line("lua", 'contains(a, "foo")', lua_membership_case.result)
