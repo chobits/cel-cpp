@@ -29,7 +29,7 @@ CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](too
 	make build
 	```
 
-	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`.
+	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`. Let test_cel_lua_atc.lua find the right path of atc router lib: [link](https://github.com/chobits/cel-cpp/blob/master/tools/test_cel_lua_atc.lua#L37).
 
 ## Results
 
