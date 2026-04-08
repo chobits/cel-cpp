@@ -37,6 +37,7 @@ struct cel_program {
   std::string list_variable_name;
   std::vector<std::string> string_variable_names;
   std::vector<std::string> int_variable_names;
+  google::protobuf::Arena binding_arena;
   google::protobuf::Arena arena;
   cel::Activation activation;
   std::unique_ptr<cel::Runtime> runtime;
@@ -257,6 +258,31 @@ absl::StatusOr<bool> EvalStringListBoolProgram(const cel_program& program,
   return value.GetBool().NativeValue();
 }
 
+absl::Status BindStringListValues(cel_program& program, const char* const* items,
+                                  size_t item_count) {
+  if (items == nullptr && item_count != 0) {
+    return absl::InvalidArgumentError(
+        "items must not be null when item_count > 0");
+  }
+
+  std::vector<std::string> values;
+  values.reserve(item_count);
+  for (size_t index = 0; index < item_count; ++index) {
+    if (items[index] == nullptr) {
+      return absl::InvalidArgumentError("items entries must not be null");
+    }
+    values.emplace_back(items[index]);
+  }
+
+  program.binding_arena.Reset();
+  auto* list_impl = google::protobuf::Arena::Create<NativeStringListValue>(
+      &program.binding_arena, std::move(values));
+  program.activation.InsertOrAssignValue(
+      program.list_variable_name,
+      cel::ListValue(cel::CustomListValue(list_impl, &program.binding_arena)));
+  return absl::OkStatus();
+}
+
 absl::StatusOr<bool> EvalScalarBoolProgram(const cel_program& program,
                                            const char* const* string_values,
                                            size_t string_value_count,
@@ -467,6 +493,24 @@ extern "C" int cel_eval_string_list_bool_program(
   }
 
   *result = *evaluation ? 1 : 0;
+  WriteError("", error_buffer, error_buffer_size);
+  return 0;
+}
+
+extern "C" int cel_bind_string_list_values(cel_program* program,
+                                            const char* const* items,
+                                            size_t item_count,
+                                            char* error_buffer,
+                                            size_t error_buffer_size) {
+  if (program == nullptr) {
+    return Fail("program must not be null", error_buffer, error_buffer_size);
+  }
+
+  auto bind_status = BindStringListValues(*program, items, item_count);
+  if (!bind_status.ok()) {
+    return FailStatus(bind_status, error_buffer, error_buffer_size);
+  }
+
   WriteError("", error_buffer, error_buffer_size);
   return 0;
 }

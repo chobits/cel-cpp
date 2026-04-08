@@ -32,6 +32,13 @@ int cel_eval_string_list_bool_program(const cel_program* program,
                                       char* error_buffer,
                                       size_t error_buffer_size);
 
+// Binds a list<string> value to a previously created CEL program.
+int cel_bind_string_list_values(cel_program* program,
+                                const char* const* items,
+                                size_t item_count,
+                                char* error_buffer,
+                                size_t error_buffer_size);
+
 // Creates a reusable CEL program for a boolean expression over scalar string
 // and int64 variables, for example 'path.startsWith("/foo") && port == 80'.
 cel_program* cel_create_scalar_bool_program(

@@ -13,6 +13,11 @@ int cel_eval_string_list_bool_program(const cel_program* program,
                                       size_t item_count, int* result,
                                       char* error_buffer,
                                       size_t error_buffer_size);
+int cel_bind_string_list_values(cel_program* program,
+                                const char* const* items,
+                                size_t item_count,
+                                char* error_buffer,
+                                size_t error_buffer_size);
 cel_program* cel_create_scalar_bool_program(const char* expression,
                                             const char* const* string_variable_names,
                                             size_t string_variable_count,
@@ -28,6 +33,17 @@ int cel_eval_scalar_bool_program(const cel_program* program,
                                  int* result,
                                  char* error_buffer,
                                  size_t error_buffer_size);
+int cel_bind_scalar_values(cel_program* program,
+                           const char* const* string_values,
+                           size_t string_value_count,
+                           const long long* int_values,
+                           size_t int_value_count,
+                           char* error_buffer,
+                           size_t error_buffer_size);
+int cel_eval_bound_bool_program(cel_program* program,
+                                int* result,
+                                char* error_buffer,
+                                size_t error_buffer_size);
 void cel_destroy_program(cel_program* program);
 ]]
 
@@ -257,7 +273,7 @@ local function run_cel_scalar_case(iterations, expression, string_variables,
     error("CEL scalar test produced unexpected result")
   end
 
-  local elapsed = benchmark(iterations, function()
+  local bind_exec_elapsed = benchmark(iterations, function()
     local bench_rc = cel.cel_eval_scalar_bool_program(
         program,
         #string_values > 0 and value_array_strings or nil,
@@ -275,10 +291,38 @@ local function run_cel_scalar_case(iterations, expression, string_variables,
     end
   end)
 
+  local bind_rc = cel.cel_bind_scalar_values(
+      program,
+      #string_values > 0 and value_array_strings or nil,
+      #string_values,
+      #int_values > 0 and value_array_ints or nil,
+      #int_values,
+      error_buffer,
+      1024)
+  if bind_rc ~= 0 then
+    cel.cel_destroy_program(program)
+    error("CEL scalar bind failed: " .. ffi.string(error_buffer))
+  end
+
+  local exec_only_elapsed = benchmark(iterations, function()
+    local bench_rc = cel.cel_eval_bound_bool_program(
+        program,
+        bool_result,
+        error_buffer,
+        1024)
+    if bench_rc ~= 0 then
+      error("CEL scalar execute-only benchmark failed: " .. ffi.string(error_buffer))
+    end
+    if (bool_result[0] ~= 0) ~= expected_result then
+      error("CEL scalar execute-only benchmark produced unexpected result")
+    end
+  end)
+
   cel.cel_destroy_program(program)
   return {
     result = result,
-    elapsed = elapsed,
+    bind_exec_elapsed = bind_exec_elapsed,
+    exec_only_elapsed = exec_only_elapsed,
   }
 end
 
@@ -321,11 +365,26 @@ if bool_result[0] == 0 then
 end
 
 local bench_result = ffi.new("int[1]")
-local cel_membership_elapsed = benchmark(iterations, function()
+local cel_membership_bind_exec_elapsed = benchmark(iterations, function()
   local bench_rc = cel.cel_eval_string_list_bool_program(
       program, items, #a, bench_result, error_buffer, 1024)
   if bench_rc ~= 0 then
     error("CEL benchmark failed: " .. ffi.string(error_buffer))
+  end
+end)
+
+local list_bind_rc = cel.cel_bind_string_list_values(
+    program, items, #a, error_buffer, 1024)
+if list_bind_rc ~= 0 then
+  cel.cel_destroy_program(program)
+  error("CEL list bind failed: " .. ffi.string(error_buffer))
+end
+
+local cel_membership_exec_only_elapsed = benchmark(iterations, function()
+  local bench_rc = cel.cel_eval_bound_bool_program(
+      program, bench_result, error_buffer, 1024)
+  if bench_rc ~= 0 then
+    error("CEL execute-only benchmark failed: " .. ffi.string(error_buffer))
   end
 end)
 
@@ -348,7 +407,8 @@ print_section(1, "ffi membership")
 print_expression_line("cel", string.format("%q", cel_expression), bool_result[0] ~= 0)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_membership_case.matched)
 print_expression_line("lua", 'contains(a, "foo")', lua_membership_case.result)
-print_perf_line("cel", cel_membership_elapsed, iterations)
+print_perf_line("cel(bind+exec)", cel_membership_bind_exec_elapsed, iterations)
+print_perf_line("cel(exec-only)", cel_membership_exec_only_elapsed, iterations)
 print_perf_line("atc", atc_membership_case.benchmark(true), iterations)
 print_perf_line("lua", lua_membership_case.elapsed, iterations)
 print_blank_line()
@@ -376,7 +436,8 @@ print_section(2, "uri matching")
 print_expression_line("cel", 'path.startsWith("/foo") && port == 80', cel_uri_prefix_case.result)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_uri_prefix_case.matched)
 print_expression_line("lua", 'path:sub(1, #"/foo") == "/foo" and port == 80', lua_uri_prefix_case.result)
-print_perf_line("cel", cel_uri_prefix_case.elapsed, iterations)
+print_perf_line("cel(bind+exec)", cel_uri_prefix_case.bind_exec_elapsed, iterations)
+print_perf_line("cel(exec-only)", cel_uri_prefix_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_uri_prefix_case.benchmark(true), iterations)
 print_perf_line("lua", lua_uri_prefix_case.elapsed, iterations)
 print_blank_line()
@@ -404,7 +465,8 @@ print_section(3, "uri exact matching")
 print_expression_line("cel", 'path == "/foo/bar" && port == 80', cel_uri_exact_case.result)
 print_expression_line("atc", 'http.path == "/foo/bar" && tcp.port == 80', atc_uri_exact_case.matched)
 print_expression_line("lua", 'path == "/foo/bar" and port == 80', lua_uri_exact_case.result)
-print_perf_line("cel", cel_uri_exact_case.elapsed, iterations)
+print_perf_line("cel(bind+exec)", cel_uri_exact_case.bind_exec_elapsed, iterations)
+print_perf_line("cel(exec-only)", cel_uri_exact_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_uri_exact_case.benchmark(true), iterations)
 print_perf_line("lua", lua_uri_exact_case.elapsed, iterations)
 print_blank_line()
@@ -431,7 +493,8 @@ print_section(4, "host and uri matching")
 print_expression_line("cel", 'host == "example.com" && path.startsWith("/api")', cel_host_path_case.result)
 print_expression_line("atc", 'http.host == "example.com" && http.path ^= "/api"', atc_host_path_case.matched)
 print_expression_line("lua", 'host == "example.com" and path:sub(1, #"/api") == "/api"', lua_host_path_case.result)
-print_perf_line("cel", cel_host_path_case.elapsed, iterations)
+print_perf_line("cel(bind+exec)", cel_host_path_case.bind_exec_elapsed, iterations)
+print_perf_line("cel(exec-only)", cel_host_path_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_host_path_case.benchmark(true), iterations)
 print_perf_line("lua", lua_host_path_case.elapsed, iterations)
 print_blank_line()
@@ -459,7 +522,8 @@ print_section(5, "uri miss")
 print_expression_line("cel", 'path.startsWith("/foo") && port == 80', cel_miss_case.result)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_miss_case.matched)
 print_expression_line("lua", 'path:sub(1, #"/foo") == "/foo" and port == 80', lua_miss_case.result)
-print_perf_line("cel", cel_miss_case.elapsed, iterations)
+print_perf_line("cel(bind+exec)", cel_miss_case.bind_exec_elapsed, iterations)
+print_perf_line("cel(exec-only)", cel_miss_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_miss_case.benchmark(false), iterations)
 print_perf_line("lua", lua_miss_case.elapsed, iterations)
 
