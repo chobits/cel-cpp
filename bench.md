@@ -33,9 +33,52 @@ CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](too
 
 ## Results
 
-Each result block has two parts. The first three lines show whether CEL, ATC, and plain Lua all produced the expected boolean result for that case. The timing lines below show the average cost per operation. For example, in `ffi membership`, all three implementations return `true`, which means they all agree that the test condition matches. 
+The table below summarizes the average latency per operation for each benchmark case. All boolean results matched the expected outcome in the raw run.
 
-The numbers that follow show that plain Lua is the fastest baseline, for example: `cel(bind+exec): 0.005862 s total, 5.862 us/op`. Here, `cel(bind+exec)` is the benchmark mode, `0.005862 s total` is the total wall-clock time for the whole benchmark loop, and `5.862 us/op` means the average time per operation in microseconds. In other words, this line says that the CEL bind-and-execute path took about 5.862 microseconds for each evaluation on average.
+| Case | Expected result | CEL `bind+exec` | CEL `exec-only` | ATC | Lua |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ffi membership` | `true` | `5.862 us/op` | `3.230 us/op` | `1.781 us/op` | `0.042 us/op` |
+| `uri matching` | `true` | `10.322 us/op` | `5.856 us/op` | `2.368 us/op` | `0.029 us/op` |
+| `uri exact matching` | `true` | `11.096 us/op` | `5.062 us/op` | `1.568 us/op` | `0.012 us/op` |
+| `host and uri matching` | `true` | `9.885 us/op` | `5.567 us/op` | `1.683 us/op` | `0.022 us/op` |
+| `uri miss` | `false` | `7.797 us/op` | `3.632 us/op` | `1.269 us/op` | `0.024 us/op` |
+
+`bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
+
+
+## CEL: `bind+exec` vs `exec-only`
+
+`bind+exec` means that for each evaluation, we first bind request data into CEL variables such as `path`, `host`, and `port`, and then execute the expression.
+
+`exec-only` means the variables have already been bound once, and we only measure the cost of running the expression itself repeatedly with the same bound values.
+
+In an HTTP request scenario, `bind+exec` is the realistic number. Each incoming request usually carries different values for `path`, `host`, headers, method, port, and other attributes, so those variables must be rebound for every request. Because of that, `exec-only` is not a realistic end-to-end per-request latency for normal request matching. It is only a lower-bound microbenchmark that isolates the cost of CEL evaluation after input preparation has already been done.
+
+So, for real request matching:
+
+- `bind+exec` is the meaningful latency number.
+- `exec-only` is a diagnostic number that shows how much of the total cost comes from variable binding versus expression execution.
+
+## Why The Four Results Differ
+
+`Lua` is fastest because it is just running direct native Lua string and integer checks, such as prefix comparison or equality, with almost no abstraction overhead.
+
+`ATC` is much faster than CEL because it is a specialized routing engine. Its DSL and execution model are designed specifically for route matching, so it avoids much of the general-purpose machinery that CEL uses.
+
+`CEL (exec-only)` is slower than ATC because CEL is a general expression engine. Even after variables are already bound, it still needs to execute through a generic runtime, resolve values, dispatch operators and functions like `startsWith`, and materialize the result.
+
+`CEL (bind+exec)` is the slowest CEL mode because it includes both the general CEL execution cost and the additional per-request variable binding cost. That binding step means taking request values and inserting them into the CEL activation before evaluation.
+
+A simple summary is:
+
+- `Lua`: minimal handwritten logic with almost no framework overhead.
+- `ATC`: specialized native matcher for routing.
+- `CEL (exec-only)`: generic expression runtime only.
+- `CEL (bind+exec)`: generic expression runtime plus per-request input binding.
+
+
+## Raw results
+
 
 ```text
 $ luajit tools/test.lua
@@ -88,33 +131,3 @@ lua: 0.000024 s total, 0.024 us/op
 gc[after_benchmark]: 168.90 KB
 gc[after_destroy]: 168.83 KB
 ```
-## CEL: `bind+exec` vs `exec-only`
-
-`bind+exec` means that for each evaluation, we first bind request data into CEL variables such as `path`, `host`, and `port`, and then execute the expression.
-
-`exec-only` means the variables have already been bound once, and we only measure the cost of running the expression itself repeatedly with the same bound values.
-
-In an HTTP request scenario, `bind+exec` is the realistic number. Each incoming request usually carries different values for `path`, `host`, headers, method, port, and other attributes, so those variables must be rebound for every request. Because of that, `exec-only` is not a realistic end-to-end per-request latency for normal request matching. It is only a lower-bound microbenchmark that isolates the cost of CEL evaluation after input preparation has already been done.
-
-So, for real request matching:
-
-- `bind+exec` is the meaningful latency number.
-- `exec-only` is a diagnostic number that shows how much of the total cost comes from variable binding versus expression execution.
-
-## Why The Four Results Differ
-
-`Lua` is fastest because it is just running direct native Lua string and integer checks, such as prefix comparison or equality, with almost no abstraction overhead.
-
-`ATC` is much faster than CEL because it is a specialized routing engine. Its DSL and execution model are designed specifically for route matching, so it avoids much of the general-purpose machinery that CEL uses.
-
-`CEL (exec-only)` is slower than ATC because CEL is a general expression engine. Even after variables are already bound, it still needs to execute through a generic runtime, resolve values, dispatch operators and functions like `startsWith`, and materialize the result.
-
-`CEL (bind+exec)` is the slowest CEL mode because it includes both the general CEL execution cost and the additional per-request variable binding cost. That binding step means taking request values and inserting them into the CEL activation before evaluation.
-
-A simple summary is:
-
-- `Lua`: minimal handwritten logic with almost no framework overhead.
-- `ATC`: specialized native matcher for routing.
-- `CEL (exec-only)`: generic expression runtime only.
-- `CEL (bind+exec)`: generic expression runtime plus per-request input binding.
-
