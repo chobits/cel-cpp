@@ -21,6 +21,8 @@ The table below summarizes the average latency per operation for each benchmark 
 | `host and uri matching` | `true` | `9.885 us/op` | `5.567 us/op` | `1.683 us/op` | `0.022 us/op` |
 | `uri miss` | `false` | `7.797 us/op` | `3.632 us/op` | `1.269 us/op` | `0.024 us/op` |
 
+For Case name (`ffi membership`), if you want to see the exact CEL, ATC, and Lua expressions used in the benchmark, see the `Raw results` section below.
+
 `bind+exec` is the more realistic per-request number for HTTP-style matching, because request values such as `path`, `host`, and `port` usually need to be rebound for every request. `exec-only` is a lower-bound number that isolates expression execution after inputs have already been prepared.
 
 
