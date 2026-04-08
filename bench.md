@@ -8,6 +8,29 @@ Benchmark driver: [tools/test_cel_lua_atc.lua](tools/test_cel_lua_atc.lua)
 
 CEL C wrapper: [tools/cel_c_api.cc](tools/cel_c_api.cc), [tools/cel_c_api.h](tools/cel_c_api.h)
 
+## Build
+
+1. Build `cel-cpp`:
+
+	```bash
+	bazel build //:cel_cpp_shared
+	```
+
+2. Build the CEL C wrapper:
+
+	```bash
+	bazel build //tools:cel_c_api_shared
+	```
+
+3. Build and wire in ATC Router:
+
+	```bash
+	cd /Users/xc/work/dev/atc-router
+	make build
+	```
+
+	The benchmark script expects the local ATC Router checkout at `/Users/xc/work/dev/atc-router` by default, and loads its Lua wrapper from `lib/resty/router` plus the shared library from `target/release`.
+
 ## Results
 
 ```text
