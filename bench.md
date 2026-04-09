@@ -32,7 +32,7 @@ For the exact CEL, ATC, and Lua expressions used in each case, see the `Raw resu
 ### Results Summary
 
 - In this Lua FFI setup, `cel-rust` is much lighter than `cel-cpp` in both `bind+exec` and `exec-only`.
-- `cel-cpp` remains the slowest CEL path because it goes through a heavier generic compiler/runtime stack.
+- `cel-cpp` remains the slowest CEL path because it goes through a heavier generic compiler/runtime stack, including CEL runtime objects such as `Activation` and `Value`, protobuf `Arena` management, and more general-purpose bookkeeping than the thinner `cel-rust` path.
 - After splitting ATC into `bind+exec` and `exec-only`, it becomes clear that much of the ATC cost is in Lua-side context reset and field insertion, not in the matcher core itself.
 - For route-style prefix matching, `atc(exec-only)` is faster than `cel-rust(exec-only)`, so ATC's matcher core is still very competitive.
 
