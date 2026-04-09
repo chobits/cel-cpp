@@ -29,6 +29,13 @@ All values in the table are `us/op`, which means microseconds per operation.  Ve
 
 For the exact CEL, ATC, and Lua expressions used in each case, see the `Raw results` section below.
 
+### Results Summary
+
+- In this Lua FFI setup, `cel-rust` is much lighter than `cel-cpp` in both `bind+exec` and `exec-only`.
+- `cel-cpp` remains the slowest CEL path because it goes through a heavier generic compiler/runtime stack.
+- After splitting ATC into `bind+exec` and `exec-only`, it becomes clear that much of the ATC cost is in Lua-side context reset and field insertion, not in the matcher core itself.
+- For route-style prefix matching, `atc(exec-only)` is faster than `cel-rust(exec-only)`, so ATC's matcher core is still very competitive.
+
 
 ## `bind+exec` and `exec-only`
 
@@ -37,50 +44,6 @@ For the exact CEL, ATC, and Lua expressions used in each case, see the `Raw resu
 `exec-only` means the variables have already been bound once, and we only measure the cost of running the expression itself repeatedly with the same bound values.
 
 In an HTTP request scenario, `bind+exec` is the realistic number because request values change on every request. `exec-only` is only a lower-bound microbenchmark that isolates evaluation after inputs have already been prepared.
-
-## Fairness Note
-
-This benchmark is useful for comparing the end-to-end local embedding paths used here, but it is not a strict interpreter-core comparison.
-
-`cel-cpp` goes through a heavier compiler/runtime stack and evaluates through generic runtime objects such as `Activation`, protobuf `Arena`, and CEL `Value`. `cel-rust` exposes a thinner path with a long-lived `Context` and direct expression resolution. So the practical takeaway is: in this Lua FFI setup, the `cel-rust` path is much lighter than the `cel-cpp` path. That should not be read as proof that the two projects are identical in semantics and implementation layers, with Rust simply being faster.
-
-The ATC numbers also need the same caution. `atc(bind+exec)` includes Lua-side context reset and field insertion on every iteration, while `atc(exec-only)` is much closer to matcher-core cost.
-
-## Why `cel-cpp` Is Slower In This Benchmark
-
-1. The `cel-cpp` execution path is still much heavier than the `cel-rust` execution path.
-
-	The current results still show a large steady-state gap after values are already bound. For `uri matching`, `cel-cpp(exec-only)` is `5.507 us/op`, while `cel-rust(exec-only)` is `0.435 us/op`. So the biggest difference is not only request-time binding, but the execution path itself.
-
-2. `cel-cpp` evaluates through a generic runtime with more value plumbing and bookkeeping.
-
-	On the C++ side, the benchmark path goes through generic CEL runtime objects such as `Activation`, protobuf `Arena`, `Value`, and, for list cases, a custom `CustomListValue` implementation. That adds flexibility, but it also means more dispatch, wrapping, and runtime bookkeeping per evaluation.
-
-3. The Rust path keeps a long-lived context and a thinner execution model.
-
-	The Rust wrapper keeps a long-lived `Context` and updates it in place. Its public `Program` is also thin: compile is basically parse, and execute is basically resolve against the stored expression and context. That reduces both binding overhead and per-evaluation runtime work.
-
-4. ATC is still faster for route-style matching because it is specialized.
-
-	Even with `cel-rust` in the mix, ATC remains the best reference point for narrow route-matching logic because its DSL and runtime are specialized for prefix, equality, and field-match operations instead of general-purpose expression evaluation.
-
-5. This benchmark excludes parse and compile cost from the hot loop.
-
-	The hot loop reuses pre-created programs in both CEL implementations. So the numbers above mostly describe request-time binding and steady-state execution, not one-time setup.
-
-## Why `atc-router` Initially Looked Slower Than `cel-rust`
-
-1. The original ATC number included context reset and field insertion on every iteration.
-
-	In the benchmark driver, ATC `bind+exec` resets the context and re-adds request fields before calling `router:execute(...)`. That means the old single ATC number included both wrapper-side request preparation and matcher execution.
-
-2. ATC `exec-only` is much lower than ATC `bind+exec`.
-
-	After splitting the benchmark, `uri matching` shows `atc(bind+exec) = 1.349 us/op` and `atc(exec-only) = 0.224 us/op`. This means most of the previous ATC cost was outside the matcher core, in context preparation.
-
-3. For prefix-style routing, the ATC matcher core is actually very competitive.
-
-	In `uri matching`, `atc(exec-only)` is faster than `cel-rust(exec-only)` (`0.224` vs `0.460 us/op`). So the earlier result did not mean that ATC's matching core was slower than `cel-rust`; it mostly meant the ATC end-to-end Lua path was thicker.
 
 ## Build
 
