@@ -13,6 +13,11 @@ int cel_eval_string_list_bool_program(const cel_program* program,
                                       size_t item_count, int* result,
                                       char* error_buffer,
                                       size_t error_buffer_size);
+int cel_bind_string_list_values(cel_program* program,
+                                const char* const* items,
+                                size_t item_count,
+                                char* error_buffer,
+                                size_t error_buffer_size);
 cel_program* cel_create_scalar_bool_program(const char* expression,
                                             const char* const* string_variable_names,
                                             size_t string_variable_count,
@@ -40,14 +45,68 @@ int cel_eval_bound_bool_program(cel_program* program,
                                 char* error_buffer,
                                 size_t error_buffer_size);
 void cel_destroy_program(cel_program* program);
+
+typedef struct cel_rust_program cel_rust_program;
+cel_rust_program* cel_rust_create_string_list_bool_program(
+  const char* expression,
+  const char* variable_name,
+  char* error_buffer,
+  size_t error_buffer_size);
+int cel_rust_eval_string_list_bool_program(
+  cel_rust_program* program,
+  const char* const* items,
+  size_t item_count,
+  int* result,
+  char* error_buffer,
+  size_t error_buffer_size);
+int cel_rust_bind_string_list_values(
+  cel_rust_program* program,
+  const char* const* items,
+  size_t item_count,
+  char* error_buffer,
+  size_t error_buffer_size);
+cel_rust_program* cel_rust_create_scalar_bool_program(
+  const char* expression,
+  const char* const* string_variable_names,
+  size_t string_variable_count,
+  const char* const* int_variable_names,
+  size_t int_variable_count,
+  char* error_buffer,
+  size_t error_buffer_size);
+int cel_rust_eval_scalar_bool_program(
+  cel_rust_program* program,
+  const char* const* string_values,
+  size_t string_value_count,
+  const long long* int_values,
+  size_t int_value_count,
+  int* result,
+  char* error_buffer,
+  size_t error_buffer_size);
+int cel_rust_bind_scalar_values(
+  cel_rust_program* program,
+  const char* const* string_values,
+  size_t string_value_count,
+  const long long* int_values,
+  size_t int_value_count,
+  char* error_buffer,
+  size_t error_buffer_size);
+int cel_rust_eval_bound_bool_program(
+  cel_rust_program* program,
+  int* result,
+  char* error_buffer,
+  size_t error_buffer_size);
+void cel_rust_destroy_program(cel_rust_program* program);
 ]]
 
 local lib_path = arg[1] or "bazel-bin/tools/libcel_c_api.dylib"
 local cel_expression = arg[2] or [["foo" in a]]
 local iterations = tonumber(arg[3]) or 200000
 local atc_root = arg[4] or "/Users/xc/work/dev/atc-router"
+local cel_rust_lib_path = arg[5] or os.getenv("CEL_RUST_LIB_PATH")
+  or "/Users/xc/work/cel-rust/target/release/libcel_capi.dylib"
 
 local cel = ffi.load(lib_path)
+local cel_rust = ffi.load(cel_rust_lib_path)
 local error_buffer = ffi.new("char[1024]")
 local a = { "foo", "bar" }
 
@@ -321,6 +380,166 @@ local function run_cel_scalar_case(iterations, expression, string_variables,
   }
 end
 
+local function run_cel_rust_scalar_case(iterations, expression, string_variables,
+                                        int_variables, expected_result)
+  local string_names = {}
+  local string_values = {}
+  for _, variable in ipairs(string_variables) do
+    string_names[#string_names + 1] = variable.name
+    string_values[#string_values + 1] = variable.value
+  end
+
+  local int_names = {}
+  local int_values = {}
+  for _, variable in ipairs(int_variables) do
+    int_names[#int_names + 1] = variable.name
+    int_values[#int_values + 1] = variable.value
+  end
+
+  local name_array_strings = ffi_string_array(string_names)
+  local name_array_ints = ffi_string_array(int_names)
+  local program = cel_rust.cel_rust_create_scalar_bool_program(
+      expression,
+      #string_names > 0 and name_array_strings or nil,
+      #string_names,
+      #int_names > 0 and name_array_ints or nil,
+      #int_names,
+      error_buffer,
+      1024)
+  if program == nil then
+    error("CEL Rust scalar program creation failed: " .. ffi.string(error_buffer))
+  end
+
+  local value_array_strings = ffi_string_array(string_values)
+  local value_array_ints = ffi_int64_array(int_values)
+  local bool_result = ffi.new("int[1]")
+  local rc = cel_rust.cel_rust_eval_scalar_bool_program(
+      program,
+      #string_values > 0 and value_array_strings or nil,
+      #string_values,
+      #int_values > 0 and value_array_ints or nil,
+      #int_values,
+      bool_result,
+      error_buffer,
+      1024)
+  if rc ~= 0 then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust scalar evaluation failed: " .. ffi.string(error_buffer))
+  end
+
+  local result = bool_result[0] ~= 0
+  if result ~= expected_result then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust scalar test produced unexpected result")
+  end
+
+  local bind_exec_elapsed = benchmark(iterations, function()
+    local bench_rc = cel_rust.cel_rust_eval_scalar_bool_program(
+        program,
+        #string_values > 0 and value_array_strings or nil,
+        #string_values,
+        #int_values > 0 and value_array_ints or nil,
+        #int_values,
+        bool_result,
+        error_buffer,
+        1024)
+    if bench_rc ~= 0 then
+      error("CEL Rust scalar benchmark failed: " .. ffi.string(error_buffer))
+    end
+    if (bool_result[0] ~= 0) ~= expected_result then
+      error("CEL Rust scalar benchmark produced unexpected result")
+    end
+  end)
+
+  local bind_rc = cel_rust.cel_rust_bind_scalar_values(
+      program,
+      #string_values > 0 and value_array_strings or nil,
+      #string_values,
+      #int_values > 0 and value_array_ints or nil,
+      #int_values,
+      error_buffer,
+      1024)
+  if bind_rc ~= 0 then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust scalar bind failed: " .. ffi.string(error_buffer))
+  end
+
+  local exec_only_elapsed = benchmark(iterations, function()
+    local bench_rc = cel_rust.cel_rust_eval_bound_bool_program(
+        program,
+        bool_result,
+        error_buffer,
+        1024)
+    if bench_rc ~= 0 then
+      error("CEL Rust scalar execute-only benchmark failed: " .. ffi.string(error_buffer))
+    end
+    if (bool_result[0] ~= 0) ~= expected_result then
+      error("CEL Rust scalar execute-only benchmark produced unexpected result")
+    end
+  end)
+
+  cel_rust.cel_rust_destroy_program(program)
+  return {
+    result = result,
+    bind_exec_elapsed = bind_exec_elapsed,
+    exec_only_elapsed = exec_only_elapsed,
+  }
+end
+
+local function run_cel_rust_list_case(iterations, expression, variable_name, values,
+                                      expected_result)
+  local program = cel_rust.cel_rust_create_string_list_bool_program(
+      expression, variable_name, error_buffer, 1024)
+  if program == nil then
+    error("CEL Rust list program creation failed: " .. ffi.string(error_buffer))
+  end
+
+  local items = ffi_string_array(values)
+  local bool_result = ffi.new("int[1]")
+  local rc = cel_rust.cel_rust_eval_string_list_bool_program(
+      program, items, #values, bool_result, error_buffer, 1024)
+  if rc ~= 0 then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust list evaluation failed: " .. ffi.string(error_buffer))
+  end
+
+  local result = bool_result[0] ~= 0
+  if result ~= expected_result then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust list test produced unexpected result")
+  end
+
+  local bind_exec_elapsed = benchmark(iterations, function()
+    local bench_rc = cel_rust.cel_rust_eval_string_list_bool_program(
+        program, items, #values, bool_result, error_buffer, 1024)
+    if bench_rc ~= 0 then
+      error("CEL Rust list benchmark failed: " .. ffi.string(error_buffer))
+    end
+  end)
+
+  local bind_rc = cel_rust.cel_rust_bind_string_list_values(
+      program, items, #values, error_buffer, 1024)
+  if bind_rc ~= 0 then
+    cel_rust.cel_rust_destroy_program(program)
+    error("CEL Rust list bind failed: " .. ffi.string(error_buffer))
+  end
+
+  local exec_only_elapsed = benchmark(iterations, function()
+    local bench_rc = cel_rust.cel_rust_eval_bound_bool_program(
+        program, bool_result, error_buffer, 1024)
+    if bench_rc ~= 0 then
+      error("CEL Rust list execute-only benchmark failed: " .. ffi.string(error_buffer))
+    end
+  end)
+
+  cel_rust.cel_rust_destroy_program(program)
+  return {
+    result = result,
+    bind_exec_elapsed = bind_exec_elapsed,
+    exec_only_elapsed = exec_only_elapsed,
+  }
+end
+
 local function lua_path_prefix_match(path, prefix, port, expected_port)
   return path:sub(1, #prefix) == prefix and port == expected_port
 end
@@ -360,11 +579,26 @@ if bool_result[0] == 0 then
 end
 
 local bench_result = ffi.new("int[1]")
-local cel_membership_elapsed = benchmark(iterations, function()
+local cel_membership_bind_exec_elapsed = benchmark(iterations, function()
   local bench_rc = cel.cel_eval_string_list_bool_program(
       program, items, #a, bench_result, error_buffer, 1024)
   if bench_rc ~= 0 then
     error("CEL benchmark failed: " .. ffi.string(error_buffer))
+  end
+end)
+
+local list_bind_rc = cel.cel_bind_string_list_values(
+    program, items, #a, error_buffer, 1024)
+if list_bind_rc ~= 0 then
+  cel.cel_destroy_program(program)
+  error("CEL list bind failed: " .. ffi.string(error_buffer))
+end
+
+local cel_membership_exec_only_elapsed = benchmark(iterations, function()
+  local bench_rc = cel.cel_eval_bound_bool_program(
+      program, bench_result, error_buffer, 1024)
+  if bench_rc ~= 0 then
+    error("CEL execute-only benchmark failed: " .. ffi.string(error_buffer))
   end
 end)
 
@@ -382,12 +616,18 @@ end
 local lua_membership_case = run_lua_case(iterations, function()
   return lua_list_contains(a, "foo")
 end, true)
+local cel_rust_membership_case = run_cel_rust_list_case(
+    iterations, cel_expression, "a", a, true)
 
 print_section(1, "ffi membership")
-print_expression_line("cel", string.format("%q", cel_expression), bool_result[0] ~= 0)
+print_expression_line("cel-cpp", string.format("%q", cel_expression), bool_result[0] ~= 0)
+print_expression_line("cel-rust", string.format("%q", cel_expression), cel_rust_membership_case.result)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_membership_case.matched)
 print_expression_line("lua", 'contains(a, "foo")', lua_membership_case.result)
-print_perf_line("cel", cel_membership_elapsed, iterations)
+print_perf_line("cel-cpp(bind+exec)", cel_membership_bind_exec_elapsed, iterations)
+print_perf_line("cel-cpp(exec-only)", cel_membership_exec_only_elapsed, iterations)
+print_perf_line("cel-rust(bind+exec)", cel_rust_membership_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-rust(exec-only)", cel_rust_membership_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_membership_case.benchmark(true), iterations)
 print_perf_line("lua", lua_membership_case.elapsed, iterations)
 print_blank_line()
@@ -410,13 +650,26 @@ local cel_uri_prefix_case = run_cel_scalar_case(
 local lua_uri_prefix_case = run_lua_case(iterations, function()
   return lua_path_prefix_match("/foo/bar", "/foo", 80, 80)
 end, true)
+local cel_rust_uri_prefix_case = run_cel_rust_scalar_case(
+    iterations,
+    'path.startsWith("/foo") && port == 80',
+    {
+      { name = "path", value = "/foo/bar" },
+    },
+    {
+      { name = "port", value = 80 },
+    },
+    true)
 
 print_section(2, "uri matching")
-print_expression_line("cel", 'path.startsWith("/foo") && port == 80', cel_uri_prefix_case.result)
+print_expression_line("cel-cpp", 'path.startsWith("/foo") && port == 80', cel_uri_prefix_case.result)
+print_expression_line("cel-rust", 'path.startsWith("/foo") && port == 80', cel_rust_uri_prefix_case.result)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_uri_prefix_case.matched)
 print_expression_line("lua", 'path:sub(1, #"/foo") == "/foo" and port == 80', lua_uri_prefix_case.result)
-print_perf_line("cel(bind+exec)", cel_uri_prefix_case.bind_exec_elapsed, iterations)
-print_perf_line("cel(exec-only)", cel_uri_prefix_case.exec_only_elapsed, iterations)
+print_perf_line("cel-cpp(bind+exec)", cel_uri_prefix_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-cpp(exec-only)", cel_uri_prefix_case.exec_only_elapsed, iterations)
+print_perf_line("cel-rust(bind+exec)", cel_rust_uri_prefix_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-rust(exec-only)", cel_rust_uri_prefix_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_uri_prefix_case.benchmark(true), iterations)
 print_perf_line("lua", lua_uri_prefix_case.elapsed, iterations)
 print_blank_line()
@@ -439,13 +692,26 @@ local cel_uri_exact_case = run_cel_scalar_case(
 local lua_uri_exact_case = run_lua_case(iterations, function()
   return lua_path_exact_match("/foo/bar", "/foo/bar", 80, 80)
 end, true)
+local cel_rust_uri_exact_case = run_cel_rust_scalar_case(
+    iterations,
+    'path == "/foo/bar" && port == 80',
+    {
+      { name = "path", value = "/foo/bar" },
+    },
+    {
+      { name = "port", value = 80 },
+    },
+    true)
 
 print_section(3, "uri exact matching")
-print_expression_line("cel", 'path == "/foo/bar" && port == 80', cel_uri_exact_case.result)
+print_expression_line("cel-cpp", 'path == "/foo/bar" && port == 80', cel_uri_exact_case.result)
+print_expression_line("cel-rust", 'path == "/foo/bar" && port == 80', cel_rust_uri_exact_case.result)
 print_expression_line("atc", 'http.path == "/foo/bar" && tcp.port == 80', atc_uri_exact_case.matched)
 print_expression_line("lua", 'path == "/foo/bar" and port == 80', lua_uri_exact_case.result)
-print_perf_line("cel(bind+exec)", cel_uri_exact_case.bind_exec_elapsed, iterations)
-print_perf_line("cel(exec-only)", cel_uri_exact_case.exec_only_elapsed, iterations)
+print_perf_line("cel-cpp(bind+exec)", cel_uri_exact_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-cpp(exec-only)", cel_uri_exact_case.exec_only_elapsed, iterations)
+print_perf_line("cel-rust(bind+exec)", cel_rust_uri_exact_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-rust(exec-only)", cel_rust_uri_exact_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_uri_exact_case.benchmark(true), iterations)
 print_perf_line("lua", lua_uri_exact_case.elapsed, iterations)
 print_blank_line()
@@ -467,13 +733,25 @@ local cel_host_path_case = run_cel_scalar_case(
 local lua_host_path_case = run_lua_case(iterations, function()
   return lua_host_and_path_match("example.com", "example.com", "/api/v1/users", "/api")
 end, true)
+local cel_rust_host_path_case = run_cel_rust_scalar_case(
+    iterations,
+    'host == "example.com" && path.startsWith("/api")',
+    {
+      { name = "host", value = "example.com" },
+      { name = "path", value = "/api/v1/users" },
+    },
+    {},
+    true)
 
 print_section(4, "host and uri matching")
-print_expression_line("cel", 'host == "example.com" && path.startsWith("/api")', cel_host_path_case.result)
+print_expression_line("cel-cpp", 'host == "example.com" && path.startsWith("/api")', cel_host_path_case.result)
+print_expression_line("cel-rust", 'host == "example.com" && path.startsWith("/api")', cel_rust_host_path_case.result)
 print_expression_line("atc", 'http.host == "example.com" && http.path ^= "/api"', atc_host_path_case.matched)
 print_expression_line("lua", 'host == "example.com" and path:sub(1, #"/api") == "/api"', lua_host_path_case.result)
-print_perf_line("cel(bind+exec)", cel_host_path_case.bind_exec_elapsed, iterations)
-print_perf_line("cel(exec-only)", cel_host_path_case.exec_only_elapsed, iterations)
+print_perf_line("cel-cpp(bind+exec)", cel_host_path_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-cpp(exec-only)", cel_host_path_case.exec_only_elapsed, iterations)
+print_perf_line("cel-rust(bind+exec)", cel_rust_host_path_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-rust(exec-only)", cel_rust_host_path_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_host_path_case.benchmark(true), iterations)
 print_perf_line("lua", lua_host_path_case.elapsed, iterations)
 print_blank_line()
@@ -496,13 +774,26 @@ local cel_miss_case = run_cel_scalar_case(
 local lua_miss_case = run_lua_case(iterations, function()
   return lua_path_prefix_match("/bar", "/foo", 81, 80)
 end, false)
+local cel_rust_miss_case = run_cel_rust_scalar_case(
+    iterations,
+    'path.startsWith("/foo") && port == 80',
+    {
+      { name = "path", value = "/bar" },
+    },
+    {
+      { name = "port", value = 81 },
+    },
+    false)
 
 print_section(5, "uri miss")
-print_expression_line("cel", 'path.startsWith("/foo") && port == 80', cel_miss_case.result)
+print_expression_line("cel-cpp", 'path.startsWith("/foo") && port == 80', cel_miss_case.result)
+print_expression_line("cel-rust", 'path.startsWith("/foo") && port == 80', cel_rust_miss_case.result)
 print_expression_line("atc", 'http.path ^= "/foo" && tcp.port == 80', atc_miss_case.matched)
 print_expression_line("lua", 'path:sub(1, #"/foo") == "/foo" and port == 80', lua_miss_case.result)
-print_perf_line("cel(bind+exec)", cel_miss_case.bind_exec_elapsed, iterations)
-print_perf_line("cel(exec-only)", cel_miss_case.exec_only_elapsed, iterations)
+print_perf_line("cel-cpp(bind+exec)", cel_miss_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-cpp(exec-only)", cel_miss_case.exec_only_elapsed, iterations)
+print_perf_line("cel-rust(bind+exec)", cel_rust_miss_case.bind_exec_elapsed, iterations)
+print_perf_line("cel-rust(exec-only)", cel_rust_miss_case.exec_only_elapsed, iterations)
 print_perf_line("atc", atc_miss_case.benchmark(false), iterations)
 print_perf_line("lua", lua_miss_case.elapsed, iterations)
 
