@@ -2,7 +2,7 @@
 
 ## Background
 
-This benchmark compares four paths for simple boolean matching: `cel-cpp` through a shared C API, `cel-rust` through a Rust `cdylib` C ABI, ATC Router through its Lua wrapper, and plain Lua as a minimal baseline. The goal is to compare realistic per-request cost against a lower-bound execution-only number and to understand where the steady-state gap comes from.
+This benchmark compares four paths for simple boolean matching: `cel-cpp` through a shared C API, `cel-rust` through a Rust `cdylib` C ABI, ATC Router through its Lua wrapper, and plain Lua as a minimal baseline. The goal is to compare realistic per-request cost against lower-bound execution-only numbers and to understand where the steady-state gap comes from.
 
 In an HTTP request path, values such as `path`, `host`, and `port` change for every request, so `bind+exec` is the realistic number. `exec-only` is only a lower-bound microbenchmark after inputs have already been prepared.
 
@@ -17,22 +17,22 @@ Rust C wrapper: `/Users/xc/work/cel-rust/cel_capi/src/lib.rs`
 
 The table below summarizes the average latency per operation for each benchmark case from the latest local run. All boolean results matched the expected outcome in the raw run.
 
-| Case | C++ `bind+exec` | C++ `exec-only` | Rust `bind+exec` | Rust `exec-only` | ATC | Lua |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `list membership` | `5.378` | `3.216` | `0.739` | `0.055` | `1.401` | `0.000` |
-| `uri matching` | `9.595` | `5.507` | `0.789` | `0.435` | `1.369` | `0.000` |
-| `uri exact matching` | `9.231` | `5.118` | `0.467` | `0.117` | `1.357` | `0.001` |
-| `host and uri matching` | `9.787` | `5.589` | `0.981` | `0.462` | `1.512` | `0.000` |
-| `uri miss` | `7.569` | `3.552` | `0.812` | `0.441` | `1.135` | `0.000` |
+| Case | C++ `bind+exec` | C++ `exec-only` | Rust `bind+exec` | Rust `exec-only` | ATC `bind+exec` | ATC `exec-only` | Lua |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `list membership` | `5.529` | `3.146` | `0.724` | `0.054` | `1.331` | `0.227` | `0.000` |
+| `uri matching` | `9.746` | `5.535` | `0.824` | `0.460` | `1.349` | `0.224` | `0.001` |
+| `uri exact matching` | `9.180` | `5.091` | `0.486` | `0.116` | `1.384` | `0.230` | `0.000` |
+| `host and uri matching` | `9.847` | `5.571` | `0.942` | `0.441` | `1.479` | `0.269` | `0.001` |
+| `uri miss` | `7.635` | `3.573` | `0.785` | `0.419` | `1.143` | `0.071` | `0.001` |
 
-All values in the table are `us/op`.
+All values in the table are `us/op`, which means microseconds per operation.  Very small Lua results may appear as `0.000` in the table because they are rounded to three decimal places, not because the work literally took zero time.
 
 For the exact CEL, ATC, and Lua expressions used in each case, see the `Raw results` section below.
 
 
 ## `bind+exec` and `exec-only`
 
-`bind+exec` means that for each evaluation, we first bind request data into CEL variables such as `path`, `host`, and `port`, and then execute the expression.
+`bind+exec` means that for each evaluation, we first bind request data into CEL variables or matcher context, and then execute the expression.
 
 `exec-only` means the variables have already been bound once, and we only measure the cost of running the expression itself repeatedly with the same bound values.
 
@@ -40,9 +40,11 @@ In an HTTP request scenario, `bind+exec` is the realistic number because request
 
 ## Fairness Note
 
-This benchmark is useful for comparing the end-to-end local embedding paths used here, but it is not a strict interpreter-core comparison between `cel-cpp` and `cel-rust`.
+This benchmark is useful for comparing the end-to-end local embedding paths used here, but it is not a strict interpreter-core comparison.
 
-`cel-cpp` goes through a heavier compiler/runtime stack and evaluates through generic runtime objects such as `Activation`, protobuf `Arena`, and CEL `Value`. `cel-rust` exposes a thinner path with a long-lived `Context` and direct expression resolution. So the practical takeaway is: in this Lua FFI setup, the `cel-rust` path is much lighter than the `cel-cpp` path. It should not be read as proof that the two projects are identical in semantics and implementation layers, with Rust simply being faster.
+`cel-cpp` goes through a heavier compiler/runtime stack and evaluates through generic runtime objects such as `Activation`, protobuf `Arena`, and CEL `Value`. `cel-rust` exposes a thinner path with a long-lived `Context` and direct expression resolution. So the practical takeaway is: in this Lua FFI setup, the `cel-rust` path is much lighter than the `cel-cpp` path. That should not be read as proof that the two projects are identical in semantics and implementation layers, with Rust simply being faster.
+
+The ATC numbers also need the same caution. `atc(bind+exec)` includes Lua-side context reset and field insertion on every iteration, while `atc(exec-only)` is much closer to matcher-core cost.
 
 ## Why `cel-cpp` Is Slower In This Benchmark
 
@@ -65,6 +67,20 @@ This benchmark is useful for comparing the end-to-end local embedding paths used
 5. This benchmark excludes parse and compile cost from the hot loop.
 
 	The hot loop reuses pre-created programs in both CEL implementations. So the numbers above mostly describe request-time binding and steady-state execution, not one-time setup.
+
+## Why `atc-router` Initially Looked Slower Than `cel-rust`
+
+1. The original ATC number included context reset and field insertion on every iteration.
+
+	In the benchmark driver, ATC `bind+exec` resets the context and re-adds request fields before calling `router:execute(...)`. That means the old single ATC number included both wrapper-side request preparation and matcher execution.
+
+2. ATC `exec-only` is much lower than ATC `bind+exec`.
+
+	After splitting the benchmark, `uri matching` shows `atc(bind+exec) = 1.349 us/op` and `atc(exec-only) = 0.224 us/op`. This means most of the previous ATC cost was outside the matcher core, in context preparation.
+
+3. For prefix-style routing, the ATC matcher core is actually very competitive.
+
+	In `uri matching`, `atc(exec-only)` is faster than `cel-rust(exec-only)` (`0.224` vs `0.460 us/op`). So the earlier result did not mean that ATC's matching core was slower than `cel-rust`; it mostly meant the ATC end-to-end Lua path was thicker.
 
 ## Build
 
@@ -108,67 +124,72 @@ This benchmark is useful for comparing the end-to-end local embedding paths used
 
 ```text
 $ luajit tools/test.lua
-gc[before_setup]: 93.60 KB
-gc[after_setup]: 114.41 KB
+gc[before_setup]: 94.51 KB
+gc[after_setup]: 115.32 KB
 1. list membership
 cel-cpp: "\"foo\" in a" => true
 cel-rust: "\"foo\" in a" => true
 atc: http.path ^= "/foo" && tcp.port == 80 => true
 lua: contains(a, "foo") => true
-cel-cpp(bind+exec): 1.075557 s total, 5.378 us/op
-cel-cpp(exec-only): 0.643296 s total, 3.216 us/op
-cel-rust(bind+exec): 0.147847 s total, 0.739 us/op
-cel-rust(exec-only): 0.010988 s total, 0.055 us/op
-atc: 0.280284 s total, 1.401 us/op
-lua: 0.000094 s total, 0.000 us/op
+cel-cpp(bind+exec): 1.105900 s total, 5.529 us/op
+cel-cpp(exec-only): 0.629142 s total, 3.146 us/op
+cel-rust(bind+exec): 0.144808 s total, 0.724 us/op
+cel-rust(exec-only): 0.010787 s total, 0.054 us/op
+atc(bind+exec): 0.266156 s total, 1.331 us/op
+atc(exec-only): 0.045427 s total, 0.227 us/op
+lua: 0.000093 s total, 0.000 us/op
 
 2. uri matching
 cel-cpp: path.startsWith("/foo") && port == 80 => true
 cel-rust: path.startsWith("/foo") && port == 80 => true
 atc: http.path ^= "/foo" && tcp.port == 80 => true
 lua: path:sub(1, #"/foo") == "/foo" and port == 80 => true
-cel-cpp(bind+exec): 1.919056 s total, 9.595 us/op
-cel-cpp(exec-only): 1.101344 s total, 5.507 us/op
-cel-rust(bind+exec): 0.157782 s total, 0.789 us/op
-cel-rust(exec-only): 0.087037 s total, 0.435 us/op
-atc: 0.273834 s total, 1.369 us/op
-lua: 0.000098 s total, 0.000 us/op
+cel-cpp(bind+exec): 1.949159 s total, 9.746 us/op
+cel-cpp(exec-only): 1.106958 s total, 5.535 us/op
+cel-rust(bind+exec): 0.164743 s total, 0.824 us/op
+cel-rust(exec-only): 0.091928 s total, 0.460 us/op
+atc(bind+exec): 0.269723 s total, 1.349 us/op
+atc(exec-only): 0.044705 s total, 0.224 us/op
+lua: 0.000100 s total, 0.001 us/op
 
 3. uri exact matching
 cel-cpp: path == "/foo/bar" && port == 80 => true
 cel-rust: path == "/foo/bar" && port == 80 => true
 atc: http.path == "/foo/bar" && tcp.port == 80 => true
 lua: path == "/foo/bar" and port == 80 => true
-cel-cpp(bind+exec): 1.846179 s total, 9.231 us/op
-cel-cpp(exec-only): 1.023547 s total, 5.118 us/op
-cel-rust(bind+exec): 0.093310 s total, 0.467 us/op
-cel-rust(exec-only): 0.023306 s total, 0.117 us/op
-atc: 0.271392 s total, 1.357 us/op
-lua: 0.000101 s total, 0.001 us/op
+cel-cpp(bind+exec): 1.835900 s total, 9.180 us/op
+cel-cpp(exec-only): 1.018183 s total, 5.091 us/op
+cel-rust(bind+exec): 0.097277 s total, 0.486 us/op
+cel-rust(exec-only): 0.023113 s total, 0.116 us/op
+atc(bind+exec): 0.276742 s total, 1.384 us/op
+atc(exec-only): 0.046014 s total, 0.230 us/op
+lua: 0.000098 s total, 0.000 us/op
 
 4. host and uri matching
 cel-cpp: host == "example.com" && path.startsWith("/api") => true
 cel-rust: host == "example.com" && path.startsWith("/api") => true
 atc: http.host == "example.com" && http.path ^= "/api" => true
 lua: host == "example.com" and path:sub(1, #"/api") == "/api" => true
-cel-cpp(bind+exec): 1.957418 s total, 9.787 us/op
-cel-cpp(exec-only): 1.117819 s total, 5.589 us/op
-cel-rust(bind+exec): 0.196212 s total, 0.981 us/op
-cel-rust(exec-only): 0.092369 s total, 0.462 us/op
-atc: 0.302471 s total, 1.512 us/op
-lua: 0.000095 s total, 0.000 us/op
+cel-cpp(bind+exec): 1.969385 s total, 9.847 us/op
+cel-cpp(exec-only): 1.114290 s total, 5.571 us/op
+cel-rust(bind+exec): 0.188328 s total, 0.942 us/op
+cel-rust(exec-only): 0.088209 s total, 0.441 us/op
+atc(bind+exec): 0.295856 s total, 1.479 us/op
+atc(exec-only): 0.053865 s total, 0.269 us/op
+lua: 0.000106 s total, 0.001 us/op
 
 5. uri miss
 cel-cpp: path.startsWith("/foo") && port == 80 => false
 cel-rust: path.startsWith("/foo") && port == 80 => false
 atc: http.path ^= "/foo" && tcp.port == 80 => false
 lua: path:sub(1, #"/foo") == "/foo" and port == 80 => false
-cel-cpp(bind+exec): 1.513736 s total, 7.569 us/op
-cel-cpp(exec-only): 0.710423 s total, 3.552 us/op
-cel-rust(bind+exec): 0.162457 s total, 0.812 us/op
-cel-rust(exec-only): 0.088172 s total, 0.441 us/op
-atc: 0.226971 s total, 1.135 us/op
-lua: 0.000097 s total, 0.000 us/op
-gc[after_benchmark]: 198.30 KB
-gc[after_destroy]: 198.23 KB
+cel-cpp(bind+exec): 1.526934 s total, 7.635 us/op
+cel-cpp(exec-only): 0.714621 s total, 3.573 us/op
+cel-rust(bind+exec): 0.157029 s total, 0.785 us/op
+cel-rust(exec-only): 0.083827 s total, 0.419 us/op
+atc(bind+exec): 0.228538 s total, 1.143 us/op
+atc(exec-only): 0.014225 s total, 0.071 us/op
+lua: 0.000120 s total, 0.001 us/op
+gc[after_benchmark]: 202.59 KB
+gc[after_destroy]: 202.53 KB
 ```
